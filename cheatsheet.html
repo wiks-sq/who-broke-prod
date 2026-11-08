@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="day">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Git Forensics Cheat Sheet // Who Broke Prod?</title>
+  <meta name="description" content="A searchable Git forensics reference: log filters, the pickaxe, blame -L/-w, bisect run and skip, reflog recovery and cherry-pick, with a live sandbox terminal.">
+  <link rel="canonical" href="https://git.regexnoir.com/cheatsheet.html">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://git.regexnoir.com/cheatsheet.html">
+  <meta property="og:title" content="Git Forensics Cheat Sheet">
+  <meta property="og:description" content="log, blame, bisect, reflog and cherry-pick for incident investigation. Searchable, with a live sandbox.">
+  <meta property="og:image" content="https://git.regexnoir.com/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="favicon.ico" sizes="48x48">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root, [data-theme="day"] { --bg: #f4f1ea; --panel: #fffdf8; --panel-2: #efe9dd; --ink: #1d232b; --muted: #5d6570; --line: #ddd4c3; --accent: #c2410c; --accent-soft: #fbe3d5; --term-bg: #1a1e24; --term-ink: #d8dee6; --hash: #f0b45a; --add: #8fd19e; --del: #f39a90; --hunk: #82c0da; --focus: #1d4ed8; }
+    [data-theme="night"] { --bg: #0d1015; --panel: #141920; --panel-2: #1a2029; --ink: #e7e2d7; --muted: #9ba4ae; --line: #29313c; --accent: #ff9e4a; --accent-soft: #3a2513; --term-bg: #090c10; --focus: #7aa2ff; }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="day"]) { --bg: #0d1015; --panel: #141920; --panel-2: #1a2029; --ink: #e7e2d7; --muted: #9ba4ae; --line: #29313c; --accent: #ff9e4a; --accent-soft: #3a2513; --term-bg: #090c10; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 "IBM Plex Sans", system-ui, sans-serif; }
+    code, pre, input.cmd { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+    a { color: var(--accent); }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+    header { border-bottom: 1px solid var(--line); background: var(--panel); }
+    header .wrap { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-top: 12px; padding-bottom: 12px; }
+    header h1 { font-size: 20px; margin: 0; }
+    header .sp { flex: 1; }
+    .btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 11px; font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+    .search { width: 100%; max-width: 360px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; }
+    .intro { color: var(--muted); margin: 18px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+    section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+    section.card h2 { margin: 0 0 4px; font-size: 17px; }
+    .cases { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .cases span { background: var(--accent-soft); border-radius: 99px; padding: 0 8px; margin-right: 4px; color: var(--ink); }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    td { padding: 5px 0; border-top: 1px dashed var(--line); vertical-align: top; }
+    td:first-child { width: 48%; padding-right: 10px; }
+    td code { font-size: 12.5px; color: var(--accent); word-break: break-word; cursor: pointer; }
+    td code:hover { text-decoration: underline; }
+    .tip { font-size: 13px; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; margin-top: 10px; }
+    .hidden { display: none; }
+    .term { background: var(--term-bg); color: var(--term-ink); border-radius: 14px; overflow: hidden; margin: 18px 0; }
+    .term .out { height: 300px; overflow: auto; padding: 10px 14px; font: 13px/1.5 "IBM Plex Mono", monospace; white-space: pre-wrap; word-break: break-word; }
+    .term .row { display: flex; gap: 8px; border-top: 1px solid #2b323b; padding: 8px 14px; align-items: center; }
+    .term .row label { color: var(--add); font: 13px "IBM Plex Mono", monospace; white-space: nowrap; }
+    input.cmd { flex: 1; min-width: 0; background: transparent; border: 0; color: #fff; font-size: 13px; outline: none; }
+    .c-hash { color: var(--hash); } .c-add { color: var(--add); } .c-del { color: var(--del); } .c-hunk { color: var(--hunk); } .c-cmd { color: #fff; }
+    .coffee { display: inline-flex; align-items: center; gap: 6px; background: #ffdd00; color: #1d1a12; border-radius: 999px; padding: 6px 13px; font-size: 13px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .coffee:hover { filter: brightness(1.05); }
+    footer { color: var(--muted); font-size: 13px; padding: 24px 0 40px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>📘 Git Forensics Cheat Sheet</h1>
+      <span class="sp"></span>
+      <input class="search" id="q" type="search" placeholder="Filter: blame, reflog, -S, skip…" aria-label="Filter the cheat sheet">
+      <a class="btn" href="index.html">← Back to the game</a>
+      <a class="coffee" href="https://buymeacoffee.com/marginnotes" target="_blank" rel="noopener noreferrer" aria-label="Buy Me a Coffee (opens in a new tab)">☕ Buy Me a Coffee</a>
+    </div>
+  </header>
+  <main class="wrap">
+    <p class="intro">The commands behind <a href="index.html">Who Broke Prod?</a>, grouped by the question they answer. Click any command to try it in the sandbox below, a small simulated repository running in your browser. Tags show which cases use each section.</p>
+
+    <div class="term" aria-label="Sandbox terminal">
+      <div class="out" id="out" aria-live="polite"></div>
+      <div class="row"><label for="cmd" id="ps">sandbox (main) $</label><input class="cmd" id="cmd" autocomplete="off" spellcheck="false" placeholder="git log --oneline --all"><button class="btn" id="reset" type="button">↺ Reset</button></div>
+    </div>
+
+    <div class="grid" id="grid">
+      <section class="card" data-k="log history path what changed file">
+        <h2>What changed? (history)</h2>
+        <div class="cases"><span>Case 01</span><span>Case 09</span></div>
+        <table>
+          <tr><td><code>git log --oneline</code></td><td>One line per commit: short hash, refs, subject.</td></tr>
+          <tr><td><code>git log -n 5</code></td><td>Only the 5 newest commits (also <code>-5</code>).</td></tr>
+          <tr><td><code>git log -- config/prod.yml</code></td><td>Commits whose diff touched that path. <b>--</b> separates paths from revisions.</td></tr>
+          <tr><td><code>git log --all --oneline</code></td><td>Every branch and tag, not just HEAD. Includes work that never shipped.</td></tr>
+          <tr><td><code>git log main..feature</code></td><td>Commits on feature that aren't on main.</td></tr>
+          <tr><td><code>git log --stat</code> / <code>-p</code></td><td>Which files changed / the full diffs.</td></tr>
+          <tr><td><code>git log --since=2026-10-28 --until="2026-10-29 18:00"</code></td><td>A time window (committer date).</td></tr>
+          <tr><td><code>git show HEAD~2</code></td><td>One commit's metadata and diff. <code>git show REV:path</code> prints a file as it was.</td></tr>
+        </table>
+        <div class="tip">A directory (<code>config/</code>) or glob (<code>'config/prod*'</code>) matches more than one file. Name the exact file when that's what you mean.</div>
+      </section>
+
+      <section class="card" data-k="author grep message regex who committed">
+        <h2>Who committed it?</h2>
+        <div class="cases"><span>Case 02</span></div>
+        <table>
+          <tr><td><code>git log --author="Mira Chen"</code></td><td>Regex on <i>Name &lt;email&gt;</i>. Matches anywhere: “Mira” also hits “Miranda”.</td></tr>
+          <tr><td><code>git log --author="^Mira C"</code></td><td>Anchor the start of the string.</td></tr>
+          <tr><td><code>git log --grep=PAY-512</code></td><td>Regex on the commit <i>message</i>. Add <code>-i</code> for case-insensitive.</td></tr>
+          <tr><td><code>git log --author=X --grep=Y</code></td><td>Both must match (author AND message).</td></tr>
+          <tr><td><code>git shortlog -sne</code></td><td>Commit counts per author, with emails.</td></tr>
+        </table>
+        <div class="tip">People commit from several email addresses. Match on the name unless the email is the point.</div>
+      </section>
+
+      <section class="card" data-k="pickaxe -S -G code string added removed search diff">
+        <h2>When did this code appear or vanish? (pickaxe)</h2>
+        <div class="cases"><span>Case 03</span></div>
+        <table>
+          <tr><td><code>git log -S"retryCharge("</code></td><td>Commits that change <i>how many times</i> the string occurs: added or removed.</td></tr>
+          <tr><td><code>git log -G"timeout_ms"</code></td><td>Commits with any added or removed line matching the regex, including in-place edits.</td></tr>
+          <tr><td><code>git log -S"x" -- src/</code></td><td>Combine with a path.</td></tr>
+          <tr><td><code>git grep -n "retryCharge(" v2.4.0</code></td><td>Search file contents at a revision.</td></tr>
+        </table>
+        <div class="tip">-S ignores a commit that only edits the arguments of a call. -G includes it. Pick the one that matches your question.</div>
+      </section>
+
+      <section class="card" data-k="blame line -L -w ignore-rev who wrote annotate">
+        <h2>Who wrote this line? (blame)</h2>
+        <div class="cases"><span>Case 04</span><span>Case 05</span></div>
+        <table>
+          <tr><td><code>git blame src/discounts.js</code></td><td>Every line → the commit that last changed it.</td></tr>
+          <tr><td><code>git blame -L 14,19 FILE</code></td><td>Only lines 14–19. Also <code>-L 14,+6</code>.</td></tr>
+          <tr><td><code>git blame -L '/function applyDiscount(/,/^}/' FILE</code></td><td>Range from a regex to a regex.</td></tr>
+          <tr><td><code>git blame -L :applyDiscount FILE</code></td><td>The function whose definition matches. Watch for similar names.</td></tr>
+          <tr><td><code>git blame -w FILE</code></td><td>Ignore whitespace-only changes (re-indents, tabs→spaces).</td></tr>
+          <tr><td><code>git blame --ignore-rev HASH FILE</code></td><td>Pretend a noisy commit never happened. In real repos: <code>.git-blame-ignore-revs</code>.</td></tr>
+          <tr><td><code>git blame REV -- FILE</code></td><td>Blame as of an older revision.</td></tr>
+          <tr><td><code>cat -n FILE</code></td><td>Find line numbers first.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" data-k="bisect binary search first bad commit good bad skip run 125 when broke">
+        <h2>When did it break? (bisect)</h2>
+        <div class="cases"><span>Case 06</span><span>Case 07</span><span>Case 10</span></div>
+        <table>
+          <tr><td><code>git bisect start BAD GOOD</code></td><td>e.g. <code>git bisect start main v2.4.0</code>. Git checks out the midpoint.</td></tr>
+          <tr><td><code>git bisect good</code> / <code>bad</code></td><td>Mark the checked-out commit after testing it.</td></tr>
+          <tr><td><code>git bisect skip</code></td><td>Can't be tested (doesn't build). Neither good nor bad.</td></tr>
+          <tr><td><code>git bisect run CMD</code></td><td>Automate: exit 0 = good, 125 = skip, 1–127 = bad.</td></tr>
+          <tr><td><code>git bisect view</code> / <code>log</code></td><td>Remaining suspects / marks so far.</td></tr>
+          <tr><td><code>git bisect reset</code></td><td>Finish and return to where you started.</td></tr>
+        </table>
+        <div class="tip">A failing <i>build</i> isn't evidence about the bug. If you mark it bad, bisect blames the commit that broke the build instead. Wrap your test in a script that exits 125 when the build fails.</div>
+      </section>
+
+      <section class="card" data-k="reflog lost recover reset HEAD@ ORIG_HEAD deleted branch undo">
+        <h2>Where did my commits go? (reflog)</h2>
+        <div class="cases"><span>Case 08</span><span>Case 10</span></div>
+        <table>
+          <tr><td><code>git reflog</code></td><td>Every position HEAD has had: commits, amends, resets, checkouts. Newest first.</td></tr>
+          <tr><td><code>git show HEAD@{4}</code></td><td>Inspect an entry.</td></tr>
+          <tr><td><code>git reset --hard HEAD@{4}</code></td><td>Move the current branch back to it.</td></tr>
+          <tr><td><code>git branch rescue HASH</code></td><td>Give a lost commit a name (safe: moves nothing).</td></tr>
+          <tr><td><code>git branch -f release/2.5 HASH</code></td><td>Move another branch without checking it out.</td></tr>
+          <tr><td><code>git reset --hard ORIG_HEAD</code></td><td>Undo the last reset.</td></tr>
+        </table>
+        <div class="tip">HEAD@{n} numbers shift every time HEAD moves, including your own checkouts. Copy the hash.</div>
+      </section>
+
+      <section class="card" data-k="cherry-pick fix release backport copy commit conflict order">
+        <h2>Ship only the fix (cherry-pick)</h2>
+        <div class="cases"><span>Case 09</span><span>Case 10</span></div>
+        <table>
+          <tr><td><code>git switch release/2.5</code></td><td>Go to the branch that should receive the fix <i>first</i>.</td></tr>
+          <tr><td><code>git cherry-pick A B</code></td><td>Copy commits A then B onto HEAD as new commits.</td></tr>
+          <tr><td><code>git cherry-pick -x A</code></td><td>Record “(cherry picked from commit …)” in the message.</td></tr>
+          <tr><td><code>git cherry-pick A..B</code></td><td>Everything after A up to B. Easy to drag in features.</td></tr>
+          <tr><td><code>git branch --contains HASH</code></td><td>Which branches already have a commit.</td></tr>
+        </table>
+        <div class="tip">If fix B edits a line that fix A introduced, pick A first, or B conflicts.</div>
+      </section>
+
+      <section class="card" data-k="revisions HEAD~ ^ @{} range syntax names">
+        <h2>Naming commits</h2>
+        <div class="cases"><span>All cases</span></div>
+        <table>
+          <tr><td><code>HEAD</code>, <code>main</code>, <code>v2.4.0</code></td><td>Where you are, a branch, a tag.</td></tr>
+          <tr><td><code>a1b2c3d</code></td><td>Any unique hash prefix (4+ chars).</td></tr>
+          <tr><td><code>HEAD~3</code>, <code>HEAD^</code></td><td>3 commits back, the parent.</td></tr>
+          <tr><td><code>HEAD@{2}</code></td><td>Where HEAD was 2 moves ago.</td></tr>
+          <tr><td><code>A..B</code></td><td>Reachable from B, not from A.</td></tr>
+        </table>
+      </section>
+    </div>
+    <footer>Part of <a href="index.html">Who Broke Prod?</a>. The sandbox is a simulation: no index, no merges, no remotes. Everything else behaves like Git. · <a href="https://buymeacoffee.com/marginnotes" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a></footer>
+  </main>
+
+  <script src="engine.js"></script>
+  <script>
+  (function () {
+    try { if (matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'night'); } catch (e) {}
+    var A = { ines: 'Ines Varga <ines@kettlebird.io>', mira: 'Mira Chen <mira@kettlebird.io>', miranda: 'Miranda Okafor <miranda.okafor@kettlebird.io>', kit: 'Kit Lindqvist <kit@contractors.kettlebird.io>', bot: 'format-bot <format-bot@kettlebird.io>' };
+    var sub = GitSim.sub;
+    var DEMO = {
+      id: 'cheatsheet-demo', now: '2026-11-01 09:00', head: 'main',
+      history: [
+        { id: 'a1', author: A.ines, date: '2026-10-20 10:00', msg: 'Initial import', files: { 'src/cart.js': 'export function total(items) {\n\treturn items.reduce((s, i) => s + i.price * i.qty, 0);\n}\n', 'README.md': '# demo\n' } },
+        { tag: 'v1.0', at: 'a1' },
+        { id: 'a2', author: A.mira, date: '2026-10-21 11:00', msg: 'Add retryCharge to checkout', files: { 'src/checkout.js': "import { total } from './cart.js';\nexport const checkout = (c) => retryCharge(total(c.items));\n" } },
+        { id: 'a3', author: A.miranda, date: '2026-10-22 12:00', msg: 'Docs: describe checkout', files: { 'README.md': sub('# demo\n', '# demo\n\nCheckout retries failed charges.\n') } },
+        { id: 'a4', author: A.bot, date: '2026-10-23 03:00', msg: 'style: tabs to spaces', files: { 'src/cart.js': function (s) { return s.replace(/\t/g, '  '); } } },
+        { id: 'a5', author: A.kit, date: '2026-10-24 15:00', msg: 'refactor: simplify cart', files: { 'src/cart.js': sub('s + i.price * i.qty', 's + i.price') } },
+        { id: 'a6', author: A.mira, date: '2026-10-25 16:00', msg: 'Remove retry (gateway retries now)', files: { 'src/checkout.js': sub('retryCharge(total(c.items))', 'charge(total(c.items))') } },
+        { id: 'f1', on: 'fix/qty', from: 'a6', author: A.ines, date: '2026-10-26 09:00', msg: 'fix: multiply by quantity again', files: { 'src/cart.js': sub('s + i.price,', 's + i.price * i.qty,') } },
+        { git: 'checkout main' },
+        { git: 'branch -D fix/qty' },
+      ],
+      scripts: { 'npm test': function (t) { var ok = (t['src/cart.js'] || '').indexOf('i.price * i.qty') >= 0; return { code: ok ? 0 : 1, out: ok ? '  ✔ cart multiplies by qty\nℹ tests 1 · pass 1 · fail 0' : '  ✖ cart multiplies by qty — expected 1800, got 600\nℹ tests 1 · pass 0 · fail 1' }; } },
+    };
+    var st, out = document.getElementById('out'), inp = document.getElementById('cmd'), ps = document.getElementById('ps');
+    var hist = [], hp = -1;
+    function esc(s) { return s.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+    function color(l) {
+      var e = esc(l);
+      if (/^\+/.test(l) || /✔/.test(l)) return '<span class="c-add">' + e + '</span>';
+      if (/^-/.test(l) || /✖|^fatal|^error/.test(l)) return '<span class="c-del">' + e + '</span>';
+      if (/^@@|^Bisecting/.test(l)) return '<span class="c-hunk">' + e + '</span>';
+      return e.replace(/^(\^?)([0-9a-f]{7,8})\b/, '$1<span class="c-hash">$2</span>').replace(/^commit ([0-9a-f]{40})/, 'commit <span class="c-hash">$1</span>');
+    }
+    function print(html) { out.insertAdjacentHTML('beforeend', html + '\n'); out.scrollTop = out.scrollHeight; }
+    function reset() {
+      st = GitSim.build(DEMO); out.innerHTML = '';
+      print('<span class="c-hunk"># Demo repo: a quantity bug, a removed retry, a formatter commit and a deleted fix branch.</span>');
+      print('<span class="c-hunk"># Try: git log --oneline --all · git log -S"retryCharge(" · git blame -w src/cart.js · git bisect start main v1.0 · git reflog</span>');
+      ps.textContent = 'sandbox (' + GitSim.promptLabel(st) + ') $';
+    }
+    function run(line) {
+      if (!line.trim()) return;
+      print('<span class="c-cmd">$ ' + esc(line) + '</span>');
+      var r = GitSim.exec(st, line);
+      if (r.clear) out.innerHTML = '';
+      else if (r.out) print(r.out.split('\n').map(color).join('\n'));
+      ps.textContent = 'sandbox (' + GitSim.promptLabel(st) + ') $';
+      hist.push(line); hp = -1;
+    }
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); run(inp.value); inp.value = ''; }
+      else if (e.key === 'Tab') { e.preventDefault(); inp.value = GitSim.complete(st, inp.value).line; }
+      else if (e.key === 'ArrowUp' && hist.length) { e.preventDefault(); hp = hp < 0 ? hist.length - 1 : Math.max(0, hp - 1); inp.value = hist[hp]; }
+      else if (e.key === 'ArrowDown' && hp >= 0) { e.preventDefault(); hp++; if (hp >= hist.length) { hp = -1; inp.value = ''; } else inp.value = hist[hp]; }
+    });
+    document.getElementById('reset').addEventListener('click', reset);
+    document.getElementById('grid').addEventListener('click', function (e) {
+      var c = e.target.closest('td code'); if (!c) return;
+      var t = c.textContent.replace(/HASH|FILE|BAD|GOOD|CMD|REV|\bA\b|\bB\b/g, function (m) { return m; });
+      inp.value = t; inp.focus(); window.scrollTo({ top: out.parentNode.offsetTop - 10, behavior: 'smooth' });
+    });
+    document.getElementById('q').addEventListener('input', function (e) {
+      var q = e.target.value.trim().toLowerCase();
+      document.querySelectorAll('#grid section').forEach(function (s) {
+        s.classList.toggle('hidden', !!q && (s.getAttribute('data-k') + ' ' + s.textContent).toLowerCase().indexOf(q) < 0);
+      });
+    });
+    reset();
+  })();
+  </script>
+</body>
+</html>

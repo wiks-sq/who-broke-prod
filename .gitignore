@@ -1,0 +1,10 @@
+# Kept local on purpose: answer key
+SOLUTIONS.md
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+node_modules/
